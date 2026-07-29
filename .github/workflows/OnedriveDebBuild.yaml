@@ -1,0 +1,145 @@
+# .github/workflows/build-deb.yaml
+name: Build Debian Package
+
+# 此仓库只承载构建流程,源码在运行时从上游 abraunegg/onedrive 拉取。
+# 每天定时检查上游;仅当上游出现新提交(版本串变化)时才构建并发布 Release。
+on:
+  schedule:
+    # 每天 UTC 02:30 触发
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: '上游引用(留空=HEAD;可填 tag 如 v2.5.10,或分支名)'
+        type: string
+        default: ''
+      force:
+        description: '强制构建(即使该版本已发布)'
+        type: boolean
+        default: false
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - name: Install build tools
+      run: |
+        apt-get update
+        apt-get install -y git curl ca-certificates build-essential \
+          libcurl4-openssl-dev libsqlite3-dev pkg-config ldc libdbus-1-dev
+
+    - name: Clone upstream onedrive source
+      env:
+        UPSTREAM_REF: ${{ inputs.upstream_ref }}
+      run: |
+        # 完整克隆以获取 tag 历史,使 `git describe` 能算出准确的版本号
+        git clone https://github.com/abraunegg/onedrive.git onedrive
+        # 手动触发时可检出指定 tag/分支;留空则使用 HEAD
+        if [ -n "$UPSTREAM_REF" ]; then
+          git -C onedrive checkout "$UPSTREAM_REF"
+        fi
+        git -C onedrive log -1 --format='Upstream HEAD: %H %s'
+
+    - name: Compute version & decide whether to build
+      id: meta
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        FORCE: ${{ inputs.force }}
+      run: |
+        cd onedrive
+        # 例:v2.5.10-80-g47dc550 -> deb 版本 2.5.10+80+g47dc550
+        DESC=$(git describe --tags --long 2>/dev/null || echo "0-0-g$(git rev-parse --short=7 HEAD)")
+        DEB_VER=$(echo "$DESC" | sed 's/^v//; s/-\([0-9]*\)-g/+\1+g/')
+        # git tag 名不允许 '+' 路径混淆,统一替换为 '-'
+        TAG=$(echo "$DEB_VER" | tr '+' '-')
+        SHA=$(git rev-parse HEAD)
+
+        echo "deb_ver=$DEB_VER"  >> "$GITHUB_OUTPUT"
+        echo "tag=$TAG"          >> "$GITHUB_OUTPUT"
+        echo "sha=$SHA"          >> "$GITHUB_OUTPUT"
+
+        if [ "$FORCE" = "true" ]; then
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "Force build requested."
+          exit 0
+        fi
+
+        # 查询 fork 仓库是否已存在该版本的 Release;存在则跳过
+        ENC_TAG=$(printf '%s' "$TAG" | sed 's/+/\\+/g')
+        HTTP=$(curl -s -o /dev/null -w '%{http_code}' \
+          -H "Authorization: Bearer $GH_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/${{ github.repository }}/releases/tags/$ENC_TAG")
+
+        if [ "$HTTP" = "200" ]; then
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+          echo "Release '$TAG' already exists (HTTP $HTTP). Skipping build."
+        else
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "Release '$TAG' not found (HTTP $HTTP). Will build."
+        fi
+
+    - name: Configure & Build (static link phobos)
+      if: steps.meta.outputs.skip != 'true'
+      run: |
+        cd onedrive
+        ./configure --prefix=/usr DC=ldc2 DCFLAGS="-link-defaultlib-shared=false"
+        make clean
+        make
+
+    - name: Verify linking
+      if: steps.meta.outputs.skip != 'true'
+      run: |
+        cd onedrive
+        if ldd ./onedrive | grep -q phobos; then
+          echo "ERROR: phobos is dynamically linked"
+          ldd ./onedrive
+          exit 1
+        fi
+        echo "OK: phobos is statically linked"
+
+    - name: Build .deb package
+      if: steps.meta.outputs.skip != 'true'
+      run: |
+        cd onedrive
+        VERSION="${{ steps.meta.outputs.deb_ver }}"
+        PKG_DIR="onedrive-${VERSION}"
+        DESTDIR="$PWD/$PKG_DIR"
+
+        make install DESTDIR="$DESTDIR"
+
+        mkdir -p "$PKG_DIR/DEBIAN"
+        printf 'Package: onedrive\nVersion: %s\nSection: net\nPriority: optional\nArchitecture: amd64\nDepends: libcurl4t64, libsqlite3-0, libdbus-1-3\nMaintainer: ${{ github.repository_owner }} <${{ github.actor }}@users.noreply.github.com>\nDescription: OneDrive Client for Linux (Auto-built from upstream)\n  A free Microsoft OneDrive client for Linux.\n  Built from https://github.com/abraunegg/onedrive @ ${{ steps.meta.outputs.sha }}\n' "$VERSION" > "$PKG_DIR/DEBIAN/control"
+
+        dpkg-deb --build --root-owner-group "$PKG_DIR"
+        cp "$PKG_DIR.deb" "$GITHUB_WORKSPACE/"
+
+    - name: Upload .deb artifact
+      if: steps.meta.outputs.skip != 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: onedrive-${{ steps.meta.outputs.deb_ver }}-amd64
+        path: "*.deb"
+
+    - name: Create GitHub Release
+      if: steps.meta.outputs.skip != 'true'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.meta.outputs.tag }}
+        name: onedrive ${{ steps.meta.outputs.deb_ver }}
+        files: "*.deb"
+        body: |
+          自动构建,源自上游 [abraunegg/onedrive](https://github.com/abraunegg/onedrive)。
+
+          - 上游 commit: `${{ steps.meta.outputs.sha }}`
+          - 包版本: `${{ steps.meta.outputs.deb_ver }}`
+          - 目标系统: Debian (trixie) amd64
+          - 依赖: `libcurl4t64`, `libsqlite3-0`, `libdbus-1-3`
+        generate_release_notes: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
