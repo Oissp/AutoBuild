@@ -18,6 +18,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: write   # 创建 Release / 推送 tag 所必需
+
 jobs:
   build-deb:
     runs-on: ubuntu-latest
