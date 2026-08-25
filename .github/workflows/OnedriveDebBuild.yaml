@@ -55,12 +55,18 @@ jobs:
         FORCE: ${{ inputs.force }}
       run: |
         cd onedrive
-        # 例:v2.5.10-80-g47dc550 -> deb 版本 2.5.10+80+g47dc550
-        DESC=$(git describe --tags --long 2>/dev/null || echo "0-0-g$(git rev-parse --short=7 HEAD)")
-        DEB_VER=$(echo "$DESC" | sed 's/^v//; s/-\([0-9]*\)-g/+\1+g/')
-        # git tag 名不允许 '+' 路径混淆,统一替换为 '-'
-        TAG=$(echo "$DEB_VER" | tr '+' '-')
+        # 版本号采用 Debian 快照约定: <tag>+git<YYYYMMDD>.<shortsha>
+        # 以 commit 日期作主排序键,Release 页按名称排序时即与发布时间一致。
+        # 'g'(git) 在 ASCII 中大于数字,故新版本自然排在旧的 +<count>+g<sha> 版本之上,
+        # 无需重命名历史 Release,旧版本会随时间下沉。
+        NEAREST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0")
+        BASE=$(echo "$NEAREST" | sed 's/^v//')
+        SHORT=$(git rev-parse --short=7 HEAD)
         SHA=$(git rev-parse HEAD)
+        DATE=$(git show -s --format=%cI HEAD | cut -dT -f1 | tr -d '-')
+        DEB_VER="${BASE}+git${DATE}.${SHORT}"
+        # git tag 名不允许 '+',统一替换为 '-'
+        TAG=$(echo "$DEB_VER" | tr '+' '-')
 
         echo "deb_ver=$DEB_VER"  >> "$GITHUB_OUTPUT"
         echo "tag=$TAG"          >> "$GITHUB_OUTPUT"
