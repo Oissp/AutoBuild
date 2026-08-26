@@ -1,5 +1,5 @@
 # .github/workflows/build-deb.yml
-name: Build Debian Package
+name: Build OneDrive Debian Package
 
 # 此仓库只承载构建流程,源码在运行时从上游 abraunegg/onedrive 拉取。
 # 每天定时检查上游;仅当上游出现新提交(版本串变化)时才构建并发布 Release。
