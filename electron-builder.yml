@@ -1,0 +1,103 @@
+appId: com.harness.desktop
+productName: harness-desktop
+copyright: Copyright © 2026 harness-desktop
+
+# 自动更新（021）：electron-updater 读取的发布源
+publish:
+  provider: github
+  owner: 988hj7tczd-oss
+  repo: harness-desktop
+
+directories:
+  output: out
+  buildResources: build
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - plugins/**/*
+  - build/icon.png
+  - build/tray/**/*
+  - build/brand/**/*
+  - package.json
+
+# 不使用 asar：dsh profile 初始化会为安装包内的依赖创建符号链接，
+# 需要真实文件路径（asar 内的符号链接目标不可靠）。
+asar: false
+
+npmRebuild: false
+
+# 复制完整 node_modules（见 scripts/after-pack.mjs）
+afterPack: scripts/after-pack.mjs
+
+# 原生模块（node-pty / koffi）解包，保证 ELECTRON_RUN_AS_NODE 下可加载
+asarUnpack:
+  - node_modules/.pnpm/node-pty*/**/*
+  - node_modules/.pnpm/koffi*/**/*
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  # 代码签名 + 公证（017）：签名身份从环境变量/钥匙串读取，不硬编码。
+  # 设置了 CSC_LINK（p12）或钥匙串含 Developer ID 证书时自动签名；
+  # 未设置时 electron-builder 默认跳过签名（identity 缺省）。
+  notarize:
+    # 不写死 teamId：从环境变量 APPLE_TEAM_ID / APPLE_ID 读取（见 docs/SIGNING.md）
+    teamId: ${env.APPLE_TEAM_ID}
+
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  shortcutName: harness-desktop
+
+linux:
+  icon: build/icon.png
+  category: Development
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  maintainer: harness-desktop <zhuanz@users.noreply.github.com>
+
+# Debian 13 (trixie) 运行时依赖：Electron 运行需要的共享库。
+# electron-builder 默认用 ldd 自动检测，但容器/CI 环境下检测结果可能不全；
+# 显式声明保证 dpkg 安装时自动拉齐依赖（apt 会自动装这些包）。
+deb:
+  depends:
+    - libnss3
+    - libnspr4
+    - libatk1.0-0
+    - libatk-bridge2.0-0
+    - libcups2
+    - libdrm2
+    - libxkbcommon0
+    - libxcomposite1
+    - libxdamage1
+    - libxfixes3
+    - libxrandr2
+    - libgbm1
+    - libasound2
+  # Debian 13 专用字段：声明目标发行版，让 dpkg 在 trixie 上优先匹配
+  priority: optional
+
+dmg:
+  title: harness-desktop
+
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/
