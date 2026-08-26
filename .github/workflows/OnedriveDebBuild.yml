@@ -1,4 +1,4 @@
-# .github/workflows/build-deb.yaml
+# .github/workflows/build-deb.yml
 name: Build Debian Package
 
 # 此仓库只承载构建流程,源码在运行时从上游 abraunegg/onedrive 拉取。
