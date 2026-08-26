@@ -48,6 +48,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.21.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: harness-desktop/pnpm-lock.yaml
+
       - name: Read locked dsh version
         id: locked
         run: |
@@ -163,17 +173,18 @@ jobs:
       - name: Install build prerequisites (Debian 13)
         run: |
           # Debian 13 (trixie) 的软件源；更新并安装构建链。
-          # electron-builder 需要：node(pnpm 装) + 基础工具(libfile] + git + python)。
+          # electron-builder 需要：node(pnpm 装) + 基础工具(file + git + python3)。
           # libglib2.0-dev 等是 node-pty / koffi 原生模块编译的依赖。
+          # libnss3 / libgbm1 等是 Electron 运行时共享库依赖。
           apt-get update -qq
           apt-get install -y --no-install-recommends \
-            ca-certificates curl gnupg git python3 make g++ \
+            ca-certificates curl gnupg git python3 make g++ xz-utils file \
             libglib2.0-dev libsecret-1-dev libffi-dev \
             libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
             libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
             libxfixes3 libxrandr2 libgbm1 libasound2
           # 安装 Node.js 22（Debian 13 仓库已有 nodejs，但版本可能偏旧；
-          # 用 NodeSource 装确定版本的 node 22）
+          # 用 NodeSource 装确定版本的 node 22，含 corepack）
           curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
           apt-get install -y nodejs
           node --version
